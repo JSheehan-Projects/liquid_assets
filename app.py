@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import pandas as pd
 import re
@@ -201,99 +202,108 @@ def main():
         ("Sunburst Chart", "Treemap (Nested Blocks)", "Force-Directed (Hub & Spoke)", "Top-Down Hierarchical")
     )
     
-    uploaded_file = st.file_uploader("Upload WhatsApp Chat (.txt)", type=["txt"])
+    # Hide the uploader in a collapsed expander at the bottom of the sidebar
+    with st.sidebar.expander("⚙️ Advanced", expanded=False):
+        uploaded_file = st.file_uploader("Override default chat log (.txt)", type=["txt"])
     
+    # Define the default path based on your folder structure
+    default_file_path = "data/20261017 - WhatsApp Chat with Pints only, no chat 🍻.txt"
+    content = None
+    
+    # Logic to handle the hidden upload override vs the default file
     if uploaded_file is not None:
         content = uploaded_file.getvalue().decode("utf-8")
-        
-        with st.spinner("Parsing chat data..."):
-            df_relationships, all_unique_names, active_members = parse_whatsapp_adds(content, admin_name)
-            
-        if df_relationships.empty:
-            st.warning("No 'added' events found. Check if the file format matches standard WhatsApp exports.")
-        else:
-            clean_df = df_relationships.dropna(subset=['Adder', 'Added'])
-            clean_df = clean_df[(clean_df['Adder'] != "") & (clean_df['Added'] != "")]
-            G = nx.from_pandas_edgelist(clean_df, source='Adder', target='Added', create_using=nx.DiGraph())
-            
-            # --- TABS SETUP ---
-            tab1, tab2 = st.tabs(["📊 Overview & Stats", "🔍 Investigate Lineage"])
-            
-            # --- TAB 1: OVERVIEW ---
-            with tab1:
-                with st.expander("1. Edit Connections (Manual Overrides)", expanded=False):
-                    st.write("Scroll to the bottom of the table to manually attribute members who joined via an invite link.")
-                    edited_df = st.data_editor(
-                        df_relationships, 
-                        num_rows="dynamic", 
-                        use_container_width=True,
-                        column_config={
-                            "Adder": st.column_config.SelectboxColumn("Adder", options=all_unique_names, required=True),
-                            "Added": st.column_config.SelectboxColumn("Added", options=all_unique_names, required=True)
-                        },
-                        key="relationship_editor"
-                    )
-                    
-                    # Rebuild graph if edits were made
-                    clean_df = edited_df.dropna(subset=['Adder', 'Added'])
-                    clean_df = clean_df[(clean_df['Adder'] != "") & (clean_df['Added'] != "")]
-                    G = nx.from_pandas_edgelist(clean_df, source='Adder', target='Added', create_using=nx.DiGraph())
-                
-                st.subheader(f"2. {graph_style}")
-                
-                if graph_style in ["Top-Down Hierarchical", "Force-Directed (Hub & Spoke)"]:
-                    graph_html_path = render_pyvis_graph(G, graph_style)
-                    with open(graph_html_path, 'r', encoding='utf-8') as f:
-                        html_data = f.read()
-                    components.html(html_data, height=750, scrolling=True)
-                    
-                elif graph_style in ["Sunburst Chart", "Treemap (Nested Blocks)"]:
-                    plotly_df = prep_plotly_data(clean_df)
-                    
-                    if graph_style == "Sunburst Chart":
-                        fig = px.sunburst(plotly_df, names='Added', parents='Adder', color_discrete_sequence=px.colors.qualitative.Pastel)
-                    else:
-                        fig = px.treemap(plotly_df, names='Added', parents='Adder', color_discrete_sequence=px.colors.qualitative.Pastel)
-                        
-                    fig.update_layout(margin=dict(t=0, l=0, r=0, b=0), height=700)
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                st.subheader("3. Top Recruiters")
-                st.markdown(f"**Points (Active members only - {len(active_members)} currently in group):** Level 1 = 1pt, Level 2 = 0.5pts, Level 3 = 0.25pts.")
-                
-                points_df = calculate_invitation_points(G, active_members)
-                if not points_df.empty:
-                    st.dataframe(points_df, use_container_width=True)
-                else:
-                    st.info("No points calculated yet.")
+    elif os.path.exists(default_file_path):
+        with open(default_file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+    
+    if content is None:
+        st.error("No chat data found. Please ensure the default file is in the 'data' folder and pushed to GitHub.")
+        return # Stop execution if no data is found
 
-            # --- TAB 2: INVESTIGATION ---
-            with tab2:
-                st.markdown("### Find a member's invitation chain")
-                search_member = st.selectbox("Select a member:", ["-- None --"] + all_unique_names, key="investigate_search")
-                
-                lineage = []
-                if search_member != "-- None --":
-                    lineage = get_lineage(G, search_member)
-                    if lineage:
-                        status = "🟢 Active" if search_member in active_members else "🔴 Removed/Left"
-                        st.info(f"**Chain of Responsibility:** {' ➔ '.join(lineage)} | **Status:** {status}")
-                    else:
-                        st.warning("Member not found in the invitation tree structure.")
-                
-                # Dedicated Sunburst for investigation
-                plotly_df_inv = prep_plotly_data(clean_df, search_member, lineage)
-                colour_map = {"Target": "#ff3333", "Inviter Chain": "#ffcc00", "Other": "#444444", "Standard": None}
-                
-                fig_inv = px.sunburst(
-                    plotly_df_inv, 
-                    names='Added', 
-                    parents='Adder', 
-                    color='Highlight', 
-                    color_discrete_map=colour_map
+    with st.spinner("Parsing chat data..."):
+        df_relationships, all_unique_names, active_members = parse_whatsapp_adds(content, admin_name)
+        
+    if df_relationships.empty:
+        st.warning("No 'added' events found. Check if the file format matches standard WhatsApp exports.")
+    else:
+        clean_df = df_relationships.dropna(subset=['Adder', 'Added'])
+        clean_df = clean_df[(clean_df['Adder'] != "") & (clean_df['Added'] != "")]
+        G = nx.from_pandas_edgelist(clean_df, source='Adder', target='Added', create_using=nx.DiGraph())
+        
+        tab1, tab2 = st.tabs(["📊 Overview & Stats", "🔍 Investigate Lineage"])
+        
+        with tab1:
+            with st.expander("1. Edit Connections (Manual Overrides)", expanded=False):
+                st.write("Scroll to the bottom of the table to manually attribute members who joined via an invite link.")
+                edited_df = st.data_editor(
+                    df_relationships, 
+                    num_rows="dynamic", 
+                    use_container_width=True,
+                    column_config={
+                        "Adder": st.column_config.SelectboxColumn("Adder", options=all_unique_names, required=True),
+                        "Added": st.column_config.SelectboxColumn("Added", options=all_unique_names, required=True)
+                    },
+                    key="relationship_editor"
                 )
-                fig_inv.update_layout(margin=dict(t=0, l=0, r=0, b=0), height=700)
-                st.plotly_chart(fig_inv, use_container_width=True)
+                
+                clean_df = edited_df.dropna(subset=['Adder', 'Added'])
+                clean_df = clean_df[(clean_df['Adder'] != "") & (clean_df['Added'] != "")]
+                G = nx.from_pandas_edgelist(clean_df, source='Adder', target='Added', create_using=nx.DiGraph())
+            
+            st.subheader(f"2. {graph_style}")
+            
+            if graph_style in ["Top-Down Hierarchical", "Force-Directed (Hub & Spoke)"]:
+                graph_html_path = render_pyvis_graph(G, graph_style)
+                with open(graph_html_path, 'r', encoding='utf-8') as f:
+                    html_data = f.read()
+                components.html(html_data, height=750, scrolling=True)
+                
+            elif graph_style in ["Sunburst Chart", "Treemap (Nested Blocks)"]:
+                plotly_df = prep_plotly_data(clean_df)
+                
+                if graph_style == "Sunburst Chart":
+                    fig = px.sunburst(plotly_df, names='Added', parents='Adder', color_discrete_sequence=px.colors.qualitative.Pastel)
+                else:
+                    fig = px.treemap(plotly_df, names='Added', parents='Adder', color_discrete_sequence=px.colors.qualitative.Pastel)
+                    
+                fig.update_layout(margin=dict(t=0, l=0, r=0, b=0), height=700)
+                st.plotly_chart(fig, use_container_width=True)
+            
+            st.subheader("3. Top Recruiters")
+            st.markdown(f"**Points (Active members only - {len(active_members)} currently in group):** Level 1 = 1pt, Level 2 = 0.5pts, Level 3 = 0.25pts.")
+            
+            points_df = calculate_invitation_points(G, active_members)
+            if not points_df.empty:
+                st.dataframe(points_df, use_container_width=True)
+            else:
+                st.info("No points calculated yet.")
+
+        with tab2:
+            st.markdown("### Find a member's invitation chain")
+            search_member = st.selectbox("Select a member:", ["-- None --"] + all_unique_names, key="investigate_search")
+            
+            lineage = []
+            if search_member != "-- None --":
+                lineage = get_lineage(G, search_member)
+                if lineage:
+                    status = "🟢 Active" if search_member in active_members else "🔴 Removed/Left"
+                    st.info(f"**Chain of Responsibility:** {' ➔ '.join(lineage)} | **Status:** {status}")
+                else:
+                    st.warning("Member not found in the invitation tree structure.")
+            
+            plotly_df_inv = prep_plotly_data(clean_df, search_member, lineage)
+            colour_map = {"Target": "#ff3333", "Inviter Chain": "#ffcc00", "Other": "#444444", "Standard": None}
+            
+            fig_inv = px.sunburst(
+                plotly_df_inv, 
+                names='Added', 
+                parents='Adder', 
+                color='Highlight', 
+                color_discrete_map=colour_map
+            )
+            fig_inv.update_layout(margin=dict(t=0, l=0, r=0, b=0), height=700)
+            st.plotly_chart(fig_inv, use_container_width=True)
 
 if __name__ == "__main__":
     main()
